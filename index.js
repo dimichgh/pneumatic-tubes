@@ -6,8 +6,8 @@ const fs = require('fs')
 const mkdirp = require('mkdirp')
 const path = require('path')
 const uuid = require('uuid')
-const dbURL = 'http://couchdb-01-2067536.lvs02.dev.ebayc3.com:5984/registry';
-const targetDb = ' http://npm-db-phx-2029920.phx02.dev.ebayc3.com:5984/registry';//'https://registry.npme-trial.qa.ebay.com';
+const dbURL = 'http://source-repo:5984/registry';
+const targetDb = ' http://taret-repo:5984/registry';
 
 class Tubes {
   constructor (opts) {
