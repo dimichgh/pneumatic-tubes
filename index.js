@@ -6,17 +6,19 @@ const fs = require('fs')
 const mkdirp = require('mkdirp')
 const path = require('path')
 const uuid = require('uuid')
+const dbURL = 'http://couchdb-01-2067536.lvs02.dev.ebayc3.com:5984/registry';
+const targetDb = ' http://npm-db-phx-2029920.phx02.dev.ebayc3.com:5984/registry';//'https://registry.npme-trial.qa.ebay.com';
 
 class Tubes {
   constructor (opts) {
-    this.tmpFolder = '/tmp/tarballs'
-    mkdirp.sync('/tmp/tarballs')
+    this.tmpFolder = './tmp/tarballs'
+    mkdirp.sync('./tmp/tarballs')
   }
   series () {
     const changes = new ChangesStream({
-      db: 'https://replicate.npmjs.com', // full database URL
+      db: dbURL, // full database URL
       include_docs: true, // whether or not we want to return the full document as a property,
-      since: 100000
+      since: 0
     })
     changes.on('readable', async () => {
       const change = changes.read()
@@ -33,25 +35,65 @@ class Tubes {
     })
   }
   async processChange (change) {
+      const load = async (version, retries) => {
+          const tarball = `${dbURL}/${version.name}/${version.name}-${version.version}.tgz`;
+          try {
+            return await this.download(tarball, version)
+          } catch (err) {
+              if (retries-- > 0) {
+                  console.warn(err.message, `loading ${version.name}@${version.version}, retries left ${retries}`);
+                  return load(version, retries);
+              }
+              console.warn(err.message, `loading ${version.name}@${version.version}`)
+          }
+      }
+
     const versions = Object.keys(change.doc.versions)
     for (var i = 0, version; (version = change.doc.versions[versions[i]]) !== undefined; i++) {
       if (version.dist && version.dist.tarball) {
         try {
-          const tarball = version.dist.tarball
-          const filename = await this.download(tarball)
+          const filename = await load(version, 3)
+          if (!filename) {
+              console.warn(`failed to load ${version.name}@${version.version}`);
+              continue;
+          }
+          const isPublished = await this.isPublished(version);
+          if (isPublished) {
+              console.log(`${version.name}@${version.version} is already published`);
+              continue;
+          }
           await this.publish(filename)
         } catch (err) {
-          console.warn(err.message)
+          console.warn(err.message, `loading ${version.name}@${version.version}`)
         }
       }
     }
   }
-  download (tarball) {
-    const filename = path.resolve(this.tmpFolder, `${uuid.v4()}.tgz`)
+  isPublished(version) {
+      const url = `${targetDb}/${version.name}`;
+      return axios({
+        method: 'get',
+        url,
+        timeout: 10000
+      })
+      .then(function(response) {
+          if (response.status !== 200) {
+              return false;
+          }
+          const info = response.data;
+          return info.versions[version.version] !== undefined;
+      })
+  }
+  download (tarball, version) {
+    const filename = path.resolve(this.tmpFolder, `${version.name}@${version.version}.tgz`)
+    if (fs.existsSync(filename)) {
+        return Promise.resolve(filename);
+    }
     return axios({
       method: 'get',
       url: tarball,
-      responseType: 'stream'
+      responseType: 'stream',
+      timeout: 10000
     })
     .then(function(response) {
       return new Promise((resolve, reject) => {
@@ -63,13 +105,15 @@ class Tubes {
       })
     })
     .then(() => {
-      console.info(`finished writing ${filename}`)
+      console.info(`finished writing ${version.name}@${version.version}, file:${filename}`)
       return filename
     })
   }
   publish (filename) {
     return new Promise((resolve, reject) => {
-      exec(`npm publish ${filename}`, {
+        return resolve();
+
+      exec(`npm --registry ${targetDb} publish ${filename}`, {
         cwd: this.tmpFolder,
         env: process.env
       }, (err, stdout, stderr) => {
